@@ -1,0 +1,91 @@
+:: .env erstellen:
+python -m venv venv
+
+:: venv aktivieren:
+venv\Scripts\activate
+
+:: venv deactivieren:
+venv\Scripts\deactivate
+
+:: venv löschen:
+rd /s /q venv
+
+:: Libs installieren:
+pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --verbose python-dotenv Setuptools cx_Freeze
+
+:: Requirements erstellen:
+pip freeze > requirements.txt
+
+:: Requirements installieren:
+pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --verbose -r requirements.txt
+
+:: show outdated:
+pip list --outdated
+
+:: update all (PowerShell):
+pip list --outdated --format=json | ConvertFrom-Json | ForEach-Object { $_.name } | ForEach-Object { pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --upgrade $_ }
+
+::Check Python Version
+python --version
+::Check Python locations
+where python
+
+:: Creating a executable with pyinstaller:
+pip freeze > requirements.txt
+pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org pyinstaller
+pyinstaller --onefile Main.py 
+or
+pyinstaller --onedir Main.py
+
+:: Creating a executable with cx_Freeze:
+- add Main.py to build.py
+- add folders to build.py
+- add config.ini to build.py
+- add requirements to build.py
+
+
+
+:: Required Libs:
+Setuptools
+python-dotenv
+pyinstaller
+
+:: most used Libs:
+bcrypt                  ::Hashing
+customtkinter           ::Schönes Tkinter
+kivy	                ::App distribtion Plattform for all OS (Win/Mac/Android)
+lxml	                ::processing large XML files (HTML parser)
+matplotlib	            ::creating static, interactive and animated visualisations
+moviepy	                ::Video interactions
+msoffcrypto-tool    	::Excel Passwortschutz entfernen
+nltk                    ::tokenizer
+numpy	                ::Data Analysis
+openai	                ::Openai (ChatGPT) API usage
+opencv	                ::image processing/computer vision
+openpyxl            	::working with Excel
+pandas              	::Working with Excel and Data
+polars			::Working with Excel and Data
+pdf2docx            	::PDF converter/data extraction to Word
+pillow	                ::Image recognition
+playwright	            ::Website interaction (Makros)
+pyautogui           	::Mouse and Keyboard control
+pygame	                ::For gaming :-)
+PyGetWindow	            ::Windows Window access
+PyMuPDF	                ::data extraction, analysis, conversion & manipulation of PDF and other Documents
+PyPDF2              	::working with PDF
+pyperclip	            ::copy/paste from/to clipboard
+python-docx         	::working with Word
+pytube	                ::Youtube interactions
+pywin32	                ::Extended API for Windows
+reportlab	            ::implemented GUI Image
+requests	            ::URL data request usage
+tkcalendar          	::Tk Kalender
+watchdog	            ::Windows System API for checking files and directories for changes
+workalendar	            ::date calculation, Region specific
+
+Reset your Site-Packages:
+-Delete everything in C:\Users\USERNAME\AppData\Local\Programs\Python\Python312\Lib\site-packages
+except:
+- README.txt
+- pip
+- pip-24.0.dist-info
