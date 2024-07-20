@@ -8,7 +8,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from typing import Optional
 
-# Logging einrichten
+# Setup logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     handlers=[
@@ -17,38 +17,37 @@ logging.basicConfig(level=logging.INFO,
                     ])
 logger = logging.getLogger(__name__)
 
-# Regex-Muster für die 10-stellige Nummer
-pattern = re.compile(r'\b\d{10}\b')
-
 def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
     """
-    Überprüft, ob der Dateiname das Suchmuster enthält.
+    Check if the filename contains the search pattern.
     
-    :param filename: Der zu überprüfende Dateiname
-    :param search_pattern: Das zu suchende Muster
-    :return: Das gefundene Muster oder None
+    :param filename: The filename to check
+    :param search_pattern: The pattern to search for
+    :return: The found pattern or None
     """
-    if search_pattern in filename:
-        logger.info(f"Match gefunden: {filename}")
-        return search_pattern
+    pattern = re.compile(search_pattern)
+    match = pattern.search(filename)
+    if match:
+        logger.info(f"Match found: {filename}")
+        return match.group(0)
     return None
 
 def show_popup(file_path: str, num: str):
     """
-    Zeigt ein Popup an, mit dem die Datei geöffnet werden kann.
+    Show a popup to open the file.
     
-    :param file_path: Der Pfad der Datei
-    :param num: Die gefundene 10-stellige Nummer
+    :param file_path: The path of the file
+    :param num: The found pattern
     """
     def open_file():
         try:
             os.startfile(file_path)
         except Exception as e:
-            logger.error(f"Fehler beim Öffnen der Datei: {e}")
+            logger.error(f"Error opening file: {e}")
 
     root = tk.Tk()
-    root.withdraw()  # Versteckt das Hauptfenster
-    if messagebox.askyesno("Datei gefunden", f"Datei mit Nummer '{num}' gefunden. Möchten Sie die Datei öffnen?\n\n{file_path}"):
+    root.withdraw()  # Hide the main window
+    if messagebox.askyesno("File found", f"File with pattern '{num}' found. Do you want to open the file?\n\n{file_path}"):
         open_file()
     root.destroy()
 
@@ -60,15 +59,15 @@ class Watcher:
 
     def run(self):
         event_handler = Handler(self.search_pattern)
-        self.observer.schedule(event_handler, self.DIRECTORY_TO_WATCH, recursive=False)
+        self.observer.schedule(event_handler, self.DIRECTORY_TO_WATCH, recursive=True)
         self.observer.start()
-        logger.info(f"Überwachung gestartet auf: {self.DIRECTORY_TO_WATCH}")
+        logger.info(f"Watching started on: {self.DIRECTORY_TO_WATCH} (including subdirectories)")
         try:
             while True:
                 pass
         except KeyboardInterrupt:
             self.observer.stop()
-            logger.info("Beobachtung beendet")
+            logger.info("Watching stopped")
         self.observer.join()
 
 class Handler(FileSystemEventHandler):
@@ -78,28 +77,33 @@ class Handler(FileSystemEventHandler):
 
     def process_file(self, event_type: str, file_path: str):
         """
-        Verarbeitet die Datei und prüft, ob die Datei das Suchmuster enthält.
-        :param event_type: Art des Datei-Events
-        :param file_path: Pfad der Datei
+        Process the file to check if it contains the search pattern.
+        :param event_type: Type of file event
+        :param file_path: Path of the file
         """
         filename = os.path.basename(file_path)
-        logger.info(f"{event_type} Datei: {filename}")
+        logger.info(f"{event_type} file: {filename} at path: {file_path}")
         num = contains_pattern(filename, self.search_pattern)
         if num:
-            logger.info(f"Gefundene Datei mit Nummer '{num}': {file_path}")
-            show_popup(file_path, num)
+            logger.info(f"File with pattern '{num}' found at path: {file_path}")
+            if event_type != "Deleted":
+                show_popup(file_path, num)
 
     def on_created(self, event):
         if not event.is_directory:
-            self.process_file("Erstellt", event.src_path)
+            self.process_file("Created", event.src_path)
 
     def on_moved(self, event):
         if not event.is_directory:
-            self.process_file("Umbenannt", event.dest_path)
+            self.process_file("Moved", event.dest_path)
 
     def on_modified(self, event):
         if not event.is_directory:
-            self.process_file("Geändert", event.src_path)
+            self.process_file("Modified", event.src_path)
+
+    def on_deleted(self, event):
+        if not event.is_directory:
+            self.process_file("Deleted", event.src_path)
 
 def start_watcher(directory: str, search_pattern: str):
     w = Watcher(directory, search_pattern)
@@ -112,13 +116,19 @@ def browse_directory(entry_dir: tk.Entry):
         entry_dir.insert(0, directory)
 
 def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
-    if 'settings' not in config:
-        config['settings'] = {
-            'watch_dir': '',
-            'search_number': ''
-        }
-        with open(config_file, 'w') as file:
-            config.write(file)
+    """
+    Ensure that the config file exists and contains necessary defaults.
+    :param config: The ConfigParser object
+    :param config_file: The path to the config file
+    """
+    if not config.has_section('settings'):
+        config.add_section('settings')
+    if 'watch_dir' not in config['settings']:
+        config.set('settings', 'watch_dir', '')
+    if 'search_pattern' not in config['settings']:
+        config.set('settings', 'search_pattern', '')
+    with open(config_file, 'w') as file:
+        config.write(file)
 
 def main():
     config_file = 'config.ini'
@@ -126,41 +136,41 @@ def main():
     config.read(config_file)
     
     ensure_config_exists(config, config_file)
-    
-    root = tk.Tk()
-    root.title("Datei Überwacher")
 
-    # Fenster Layout
-    tk.Label(root, text="Ordner zum Überwachen:").grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
+    root = tk.Tk()
+    root.title("File Watcher")
+
+    # Window Layout
+    tk.Label(root, text="Directory to Watch:").grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
     entry_dir = tk.Entry(root, width=50)
     entry_dir.grid(row=0, column=1, padx=10, pady=5)
-    tk.Button(root, text="Durchsuchen...", command=lambda: browse_directory(entry_dir)).grid(row=0, column=2, padx=10, pady=5)
+    tk.Button(root, text="Browse...", command=lambda: browse_directory(entry_dir)).grid(row=0, column=2, padx=10, pady=5)
 
-    tk.Label(root, text="Zu suchende 10-stellige Nummer:").grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
-    entry_num = tk.Entry(root, width=50)
-    entry_num.grid(row=1, column=1, padx=10, pady=5)
+    tk.Label(root, text="Search Pattern (Regex):").grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
+    entry_pattern = tk.Entry(root, width=50)
+    entry_pattern.grid(row=1, column=1, padx=10, pady=5)
 
-    # Initiale Werte aus config.ini laden, falls vorhanden
+    # Load initial values from config.ini if available
     entry_dir.insert(0, config['settings']['watch_dir'])
-    entry_num.insert(0, config['settings']['search_number'])
+    entry_pattern.insert(0, config['settings']['search_pattern'])
 
     def on_start():
         directory = entry_dir.get()
-        search_pattern = entry_num.get()
+        search_pattern = entry_pattern.get()
 
-        if not directory or not search_pattern or not re.match(r'\b\d{10}\b', search_pattern):
-            messagebox.showerror("Fehler", "Bitte geben Sie einen gültigen Ordner und eine 10-stellige Nummer an.")
+        if not directory or not search_pattern:
+            messagebox.showerror("Error", "Please provide a valid directory and search pattern.")
             return
 
-        # Einstellungen in config.ini speichern
+        # Save settings in config.ini
         config['settings']['watch_dir'] = directory
-        config['settings']['search_number'] = search_pattern
+        config['settings']['search_pattern'] = search_pattern
 
         with open(config_file, 'w') as configfile:
             config.write(configfile)
 
-        root.destroy()  # Fenster schließen und Watcher starten
-        logger.info(f"Überwachung starten: Ordner '{directory}', Muster '{search_pattern}'")
+        root.destroy()  # Close window and start watcher
+        logger.info(f"Starting watcher: Directory '{directory}', Pattern '{search_pattern}'")
         start_watcher(directory, search_pattern)
 
     tk.Button(root, text="Start", command=on_start).grid(row=2, column=1, pady=10)
