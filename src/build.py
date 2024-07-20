@@ -8,7 +8,7 @@ def load_requirements(path):
         return [line.strip() for line in file if line.strip() and not line.startswith('#')]
 
 # Load packages from build_requirements.txt, excluding any version info
-packages = load_requirements("build_requirements.txt")
+packages = load_requirements(r"build_requirements.txt")
 packages = [pkg.split('==')[0] for pkg in packages]  # This removes version constraints, adjust if needed
 
 build_exe_options = {
