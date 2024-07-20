@@ -16,23 +16,23 @@ build_exe_options = {
     # "excludes": ["tkinter"],  # Exclude any packages not needed
     "include_files": [
         os.path.join(os.path.dirname(__file__), "config.ini"),
-        os.path.join(os.path.dirname(__file__), ".env"),
-        (os.path.join(os.path.dirname(__file__), "Templates"), "Templates"),
-        (os.path.join(os.path.dirname(__file__), "Data"), "Data"),
-        (os.path.join(os.path.dirname(__file__), "Out"), "Out"),
-        (os.path.join(os.path.dirname(__file__), "modules"), "modules")
+        # os.path.join(os.path.dirname(__file__), ".env"),
+        # (os.path.join(os.path.dirname(__file__), "Templates"), "Templates"),
+        # (os.path.join(os.path.dirname(__file__), "Data"), "Data"),
+        # (os.path.join(os.path.dirname(__file__), "Out"), "Out"),
+        # (os.path.join(os.path.dirname(__file__), "modules"), "modules")
     ]
 }
 # with GUI
-# base = "Win32GUI" if sys.platform == "command" else None 
+base = "Win32GUI" if sys.platform == "command" else None 
 
 # without GUI
-base = "Console"
+# base = "Console"
 
 setup(
-    name="Test-Template_Repository",
-    version="0.1",
-    description="Testing exe with Template Repository",
+    name="Directory File Watcher",
+    version="1.0.0",
+    description="Looks for Changes in the specified folder and gives a pop up if a specific file is created/modified",
     options={"build_exe": build_exe_options},
     executables=[Executable("Main.py", base=base)]
 )
