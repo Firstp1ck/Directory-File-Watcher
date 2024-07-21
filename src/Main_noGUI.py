@@ -3,10 +3,11 @@ import re
 import logging
 import configparser
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from typing import Optional
+import win32print
 
 # Setup logging
 logging.basicConfig(level=logging.INFO,
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
     """
     Check if the filename contains the search pattern.
-    
+
     :param filename: The filename to check
     :param search_pattern: The pattern to search for
     :return: The found pattern or None
@@ -51,6 +52,38 @@ def show_popup(file_path: str, num: str):
         open_file()
     root.destroy()
 
+def print_pattern(pattern: str):
+    """
+    Print a pattern using the default printer
+
+    :param pattern: The pattern to print
+    """
+    printer_name = win32print.GetDefaultPrinter()
+    if not printer_name:
+        logger.error("No default printer found")
+        return
+
+    logger.info(f"Printing pattern '{pattern}' to printer '{printer_name}'")
+
+    try:
+        hPrinter = win32print.OpenPrinter(printer_name)
+        doc_info = {
+            "pDocName": "File Watcher Pattern Print",
+            "pOutputFile": None,
+            "pDatatype": "RAW"
+        }
+        hJob = win32print.StartDocPrinter(hPrinter, 1, (doc_info,))
+        win32print.StartPagePrinter(hPrinter)
+
+        win32print.WritePrinter(hPrinter, pattern.encode('utf-8'))
+
+        win32print.EndPagePrinter(hPrinter)
+        win32print.EndDocPrinter(hPrinter)
+        win32print.ClosePrinter(hPrinter)
+        logger.info("Pattern printed successfully")
+    except Exception as e:
+        logger.error(f"Failed to print pattern: {e}")
+
 class Watcher:
     def __init__(self, directory_to_watch: str, search_pattern: str):
         self.DIRECTORY_TO_WATCH = directory_to_watch
@@ -63,8 +96,7 @@ class Watcher:
         self.observer.start()
         logger.info(f"Watching started on: {self.DIRECTORY_TO_WATCH} (including subdirectories)")
         try:
-            while True:
-                pass
+            self.observer.join()
         except KeyboardInterrupt:
             self.observer.stop()
             logger.info("Watching stopped")
@@ -88,6 +120,7 @@ class Handler(FileSystemEventHandler):
             logger.info(f"File with pattern '{num}' found at path: {file_path}")
             if event_type != "Deleted":
                 show_popup(file_path, num)
+                print_pattern(num)  # Print the found pattern
 
     def on_created(self, event):
         if not event.is_directory:
@@ -109,12 +142,6 @@ def start_watcher(directory: str, search_pattern: str):
     w = Watcher(directory, search_pattern)
     w.run()
 
-def browse_directory(entry_dir: tk.Entry):
-    directory = filedialog.askdirectory()
-    if directory:
-        entry_dir.delete(0, tk.END)
-        entry_dir.insert(0, directory)
-
 def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
     """
     Ensure that the config file exists and contains necessary defaults.
@@ -127,55 +154,36 @@ def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
         config.set('settings', 'watch_dir', '')
     if 'search_pattern' not in config['settings']:
         config.set('settings', 'search_pattern', '')
-    with open(config_file, 'w') as file:
+    with open(config_file, 'w', encoding='utf-8') as file:
         config.write(file)
 
 def main():
-    config_file = 'config.ini'
+    config_file = r'src\config_noGUI.ini'
     config = configparser.ConfigParser()
-    config.read(config_file)
+    
+    logger.info(f"Reading config file: {config_file}")
+    with open(config_file, 'r', encoding='utf-8') as f:
+        config.read_file(f)
     
     ensure_config_exists(config, config_file)
+    
+    # Read settings from config file
+    watch_dir = config.get('settings', 'watch_dir', fallback='')
+    search_pattern = config.get('settings', 'search_pattern', fallback='')
 
-    root = tk.Tk()
-    root.title("File Watcher")
+    logger.info(f"Configured watch directory: '{watch_dir}'")
+    logger.info(f"Configured search pattern: '{search_pattern}'")
 
-    # Window Layout
-    tk.Label(root, text="Directory to Watch:").grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
-    entry_dir = tk.Entry(root, width=50)
-    entry_dir.grid(row=0, column=1, padx=10, pady=5)
-    tk.Button(root, text="Browse...", command=lambda: browse_directory(entry_dir)).grid(row=0, column=2, padx=10, pady=5)
+    # Verify the directory exists
+    if not os.path.isdir(watch_dir):
+        logger.error(f"Directory does not exist: {watch_dir}")
+        raise ValueError("Please provide a valid directory and search pattern in the config_noGUI.ini file.")
 
-    tk.Label(root, text="Search Pattern (Regex):").grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
-    entry_pattern = tk.Entry(root, width=50)
-    entry_pattern.grid(row=1, column=1, padx=10, pady=5)
-
-    # Load initial values from config.ini if available
-    entry_dir.insert(0, config['settings']['watch_dir'])
-    entry_pattern.insert(0, config['settings']['search_pattern'])
-
-    def on_start():
-        directory = entry_dir.get()
-        search_pattern = entry_pattern.get()
-
-        if not directory or not search_pattern:
-            messagebox.showerror("Error", "Please provide a valid directory and search pattern.")
-            return
-
-        # Save settings in config.ini
-        config['settings']['watch_dir'] = directory
-        config['settings']['search_pattern'] = search_pattern
-
-        with open(config_file, 'w') as configfile:
-            config.write(configfile)
-
-        root.destroy()  # Close window and start watcher
-        logger.info(f"Starting watcher: Directory '{directory}', Pattern '{search_pattern}'")
-        start_watcher(directory, search_pattern)
-
-    tk.Button(root, text="Start", command=on_start).grid(row=2, column=1, pady=10)
-
-    root.mainloop()
+    logger.info(f"Starting watcher: Directory '{watch_dir}', Pattern '{search_pattern}'")
+    start_watcher(watch_dir, search_pattern)
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
