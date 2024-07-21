@@ -7,7 +7,7 @@ from tkinter import messagebox
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from typing import Optional
-import win32print
+from datetime import datetime, timedelta
 
 # Setup logging
 logging.basicConfig(level=logging.INFO,
@@ -17,6 +17,9 @@ logging.basicConfig(level=logging.INFO,
                         logging.StreamHandler()
                     ])
 logger = logging.getLogger(__name__)
+
+PROCESSED_FILES = {}
+IGNORE_INTERVAL = timedelta(seconds=60)  # Increase this interval as needed
 
 def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
     """
@@ -33,56 +36,31 @@ def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
         return match.group(0)
     return None
 
-def show_popup(file_path: str, num: str):
+def show_print_confirmation(file_path: str):
     """
-    Show a popup to open the file.
-    
-    :param file_path: The path of the file
-    :param num: The found pattern
-    """
-    def open_file():
-        try:
-            os.startfile(file_path)
-        except Exception as e:
-            logger.error(f"Error opening file: {e}")
+    Show a popup to confirm that the print process is finished.
 
+    :param file_path: The path of the file that was printed.
+    """
     root = tk.Tk()
     root.withdraw()  # Hide the main window
-    if messagebox.askyesno("File found", f"File with pattern '{num}' found. Do you want to open the file?\n\n{file_path}"):
-        open_file()
+    messagebox.showinfo("Print Confirmation", f"Print command issued for file:\n\n{file_path}")
     root.destroy()
 
-def print_pattern(pattern: str):
+def print_file(file_path: str):
     """
-    Print a pattern using the default printer
+    Print a PDF, DOC, or Excel file using the default application.
 
-    :param pattern: The pattern to print
+    :param file_path: The path to the file to be printed.
     """
-    printer_name = win32print.GetDefaultPrinter()
-    if not printer_name:
-        logger.error("No default printer found")
-        return
-
-    logger.info(f"Printing pattern '{pattern}' to printer '{printer_name}'")
-
     try:
-        hPrinter = win32print.OpenPrinter(printer_name)
-        doc_info = {
-            "pDocName": "File Watcher Pattern Print",
-            "pOutputFile": None,
-            "pDatatype": "RAW"
-        }
-        hJob = win32print.StartDocPrinter(hPrinter, 1, (doc_info,))
-        win32print.StartPagePrinter(hPrinter)
-
-        win32print.WritePrinter(hPrinter, pattern.encode('utf-8'))
-
-        win32print.EndPagePrinter(hPrinter)
-        win32print.EndDocPrinter(hPrinter)
-        win32print.ClosePrinter(hPrinter)
-        logger.info("Pattern printed successfully")
+        logger.info(f"Printing file: {file_path}")
+        os.startfile(file_path, "print")
+        logger.info(f"File sent to printer successfully: {file_path}")
+        show_print_confirmation(file_path)
     except Exception as e:
-        logger.error(f"Failed to print pattern: {e}")
+        logger.error(f"Failed to print file: {e}")
+        show_print_confirmation(file_path)
 
 class Watcher:
     def __init__(self, directory_to_watch: str, search_pattern: str):
@@ -113,14 +91,25 @@ class Handler(FileSystemEventHandler):
         :param event_type: Type of file event
         :param file_path: Path of the file
         """
+        global PROCESSED_FILES
+        now = datetime.now()
+
+        # Clean up the processed files dictionary
+        PROCESSED_FILES = {path: timestamp for path, timestamp in PROCESSED_FILES.items() if now - timestamp < IGNORE_INTERVAL}
+
+        # Check if the file was processed recently
+        if file_path in PROCESSED_FILES:
+            logger.info(f"Ignoring file as it was processed recently: {file_path}")
+            return
+
         filename = os.path.basename(file_path)
         logger.info(f"{event_type} file: {filename} at path: {file_path}")
         num = contains_pattern(filename, self.search_pattern)
         if num:
             logger.info(f"File with pattern '{num}' found at path: {file_path}")
             if event_type != "Deleted":
-                show_popup(file_path, num)
-                print_pattern(num)  # Print the found pattern
+                print_file(file_path)
+                PROCESSED_FILES[file_path] = now  # Update the last processed time
 
     def on_created(self, event):
         if not event.is_directory:

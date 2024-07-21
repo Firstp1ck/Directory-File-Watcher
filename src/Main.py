@@ -7,6 +7,7 @@ from tkinter import messagebox, filedialog
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from typing import Optional
+from datetime import datetime, timedelta
 
 # Setup logging
 logging.basicConfig(level=logging.INFO,
@@ -16,6 +17,9 @@ logging.basicConfig(level=logging.INFO,
                         logging.StreamHandler()
                     ])
 logger = logging.getLogger(__name__)
+
+PROCESSED_FILES = {}
+IGNORE_INTERVAL = timedelta(seconds=60)  # Time window to ignore subsequent events for the same file
 
 def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
     """
@@ -32,24 +36,31 @@ def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
         return match.group(0)
     return None
 
-def show_popup(file_path: str, num: str):
+def show_print_confirmation(file_path: str):
     """
-    Show a popup to open the file.
-    
-    :param file_path: The path of the file
-    :param num: The found pattern
-    """
-    def open_file():
-        try:
-            os.startfile(file_path)
-        except Exception as e:
-            logger.error(f"Error opening file: {e}")
+    Show a popup to confirm that the print process is finished.
 
+    :param file_path: The path of the file that was printed.
+    """
     root = tk.Tk()
     root.withdraw()  # Hide the main window
-    if messagebox.askyesno("File found", f"File with pattern '{num}' found. Do you want to open the file?\n\n{file_path}"):
-        open_file()
+    messagebox.showinfo("Print Confirmation", f"Print command issued for file:\n\n{file_path}")
     root.destroy()
+
+def print_file(file_path: str):
+    """
+    Print a PDF, DOC, or Excel file using the default application.
+
+    :param file_path: The path to the file to be printed.
+    """
+    try:
+        logger.info(f"Printing file: {file_path}")
+        os.startfile(file_path, "print")
+        logger.info(f"File sent to printer successfully: {file_path}")
+        show_print_confirmation(file_path)
+    except Exception as e:
+        logger.error(f"Failed to print file: {e}")
+        show_print_confirmation(file_path)
 
 class Watcher:
     def __init__(self, directory_to_watch: str, search_pattern: str):
@@ -81,13 +92,25 @@ class Handler(FileSystemEventHandler):
         :param event_type: Type of file event
         :param file_path: Path of the file
         """
+        global PROCESSED_FILES
+        now = datetime.now()
+
+        # Clean up the processed files dictionary
+        PROCESSED_FILES = {path: timestamp for path, timestamp in PROCESSED_FILES.items() if now - timestamp < IGNORE_INTERVAL}
+
+        # Check if the file was processed recently
+        if file_path in PROCESSED_FILES:
+            logger.info(f"Ignoring file as it was processed recently: {file_path}")
+            return
+
         filename = os.path.basename(file_path)
         logger.info(f"{event_type} file: {filename} at path: {file_path}")
         num = contains_pattern(filename, self.search_pattern)
         if num:
             logger.info(f"File with pattern '{num}' found at path: {file_path}")
             if event_type != "Deleted":
-                show_popup(file_path, num)
+                print_file(file_path)
+                PROCESSED_FILES[file_path] = now  # Update the last processed time
 
     def on_created(self, event):
         if not event.is_directory:
@@ -127,7 +150,7 @@ def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
         config.set('settings', 'watch_dir', '')
     if 'search_pattern' not in config['settings']:
         config.set('settings', 'search_pattern', '')
-    with open(config_file, 'w') as file:
+    with open(config_file, 'w', encoding='utf-8') as file:
         config.write(file)
 
 def main():
