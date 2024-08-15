@@ -2,11 +2,12 @@ import os
 import re
 import logging
 import configparser
+import threading
 import tkinter as tk
 from tkinter import messagebox, filedialog
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, timedelta
 
 # Setup logging
@@ -44,7 +45,7 @@ def show_print_confirmation(file_path: str):
     """
     root = tk.Tk()
     root.withdraw()  # Hide the main window
-    messagebox.showinfo("Print Confirmation", f"Print command issued for file:\n\n{file_path}")
+    messagebox.showinfo("Print Confirmation", f"Print command issued for file:\\n\\n{file_path}")
     root.destroy()
 
 def print_file(file_path: str):
@@ -153,6 +154,20 @@ def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
     with open(config_file, 'w', encoding='utf-8') as file:
         config.write(file)
 
+def list_files(directory: str, pattern: str) -> List[str]:
+    """
+    List all files in a directory that match the given pattern.
+    :param directory: The directory to search
+    :param pattern: The pattern to match
+    :return: List of matching file paths
+    """
+    matched_files = []
+    for root, _, files in os.walk(directory):
+        for filename in files:
+            if contains_pattern(filename, pattern):
+                matched_files.append(os.path.join(root, filename))
+    return matched_files
+
 def main():
     config_file = 'config.ini'
     config = configparser.ConfigParser()
@@ -173,6 +188,21 @@ def main():
     entry_pattern = tk.Entry(root, width=50)
     entry_pattern.grid(row=1, column=1, padx=10, pady=5)
 
+    listbox_files = tk.Listbox(root, width=50, height=10)
+    listbox_files.grid(row=2, column=0, columnspan=3, padx=10, pady=5)
+
+    def update_file_list():
+        directory = entry_dir.get()
+        pattern = entry_pattern.get()
+        if os.path.isdir(directory) and pattern:
+            matched_files = list_files(directory, pattern)
+            listbox_files.delete(0, tk.END)
+            for file_path in matched_files:
+                listbox_files.insert(tk.END, file_path)
+
+    entry_dir.bind("<FocusOut>", lambda e: update_file_list())
+    entry_pattern.bind("<FocusOut>", lambda e: update_file_list())
+
     # Load initial values from config.ini if available
     entry_dir.insert(0, config['settings']['watch_dir'])
     entry_pattern.insert(0, config['settings']['search_pattern'])
@@ -192,11 +222,21 @@ def main():
         with open(config_file, 'w') as configfile:
             config.write(configfile)
 
-        root.destroy()  # Close window and start watcher
+        # Start the watcher in a new thread
+        watcher_thread = threading.Thread(target=start_watcher_thread, args=(directory, search_pattern), daemon=True)
+        watcher_thread.start()
+        
+    def start_watcher_thread(directory: str, search_pattern: str):
         logger.info(f"Starting watcher: Directory '{directory}', Pattern '{search_pattern}'")
         start_watcher(directory, search_pattern)
 
-    tk.Button(root, text="Start", command=on_start).grid(row=2, column=1, pady=10)
+    def on_print_selected():
+        selected_file = listbox_files.get(listbox_files.curselection())
+        if selected_file:
+            print_file(selected_file)
+
+    tk.Button(root, text="Start Watching", command=on_start).grid(row=3, column=1, pady=10)
+    tk.Button(root, text="Print Selected File", command=on_print_selected).grid(row=4, column=1, pady=10)
 
     root.mainloop()
 

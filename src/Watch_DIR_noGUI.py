@@ -8,6 +8,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from typing import Optional
 from datetime import datetime, timedelta
+import pyperclip
 
 # Setup logging
 logging.basicConfig(level=logging.INFO,
@@ -36,31 +37,55 @@ def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
         return match.group(0)
     return None
 
-def show_print_confirmation(file_path: str):
+def extract_number(filename: str) -> Optional[str]:
     """
-    Show a popup to confirm that the print process is finished.
+    Extract the specific number from the filename.
 
-    :param file_path: The path of the file that was printed.
+    :param filename: The filename to extract the number from
+    :return: The extracted number or None
+    """
+    match = re.search(r'AZ_[^_]+_.*?_(\\d+)_.*', filename)
+    if match:
+        return match.group(1)
+    return None
+
+def copy_to_clipboard(text: str):
+    """
+    Copy the given text to the clipboard.
+
+    :param text: The text to copy to the clipboard
+    """
+    pyperclip.copy(text)
+    logger.info(f"Copied to clipboard: {text}")
+
+def confirm_print(file_path: str) -> bool:
+    """
+    Show a popup to confirm if the file should be printed.
+
+    :param file_path: The path of the file to be printed.
+    :return: True if the user confirms, False otherwise
     """
     root = tk.Tk()
     root.withdraw()  # Hide the main window
-    messagebox.showinfo("Print Confirmation", f"Print command issued for file:\n\n{file_path}")
+    result = messagebox.askokcancel("Print Confirmation", f"Do you want to print the file:\\n\\n{file_path}?")
     root.destroy()
+    return result
 
 def print_file(file_path: str):
     """
-    Print a PDF, DOC, or Excel file using the default application.
+    Print file using the default application only if user confirms.
 
     :param file_path: The path to the file to be printed.
     """
     try:
-        logger.info(f"Printing file: {file_path}")
-        os.startfile(file_path, "print")
-        logger.info(f"File sent to printer successfully: {file_path}")
-        show_print_confirmation(file_path)
+        logger.info(f"Asked to print file: {file_path}")
+        if confirm_print(file_path):
+            os.startfile(file_path, "print")
+            logger.info(f"File sent to printer successfully: {file_path}")
+        else:
+            logger.info(f"Print cancelled for file: {file_path}")
     except Exception as e:
         logger.error(f"Failed to print file: {e}")
-        show_print_confirmation(file_path)
 
 class Watcher:
     def __init__(self, directory_to_watch: str, search_pattern: str):
@@ -106,6 +131,9 @@ class Handler(FileSystemEventHandler):
         logger.info(f"{event_type} file: {filename} at path: {file_path}")
         num = contains_pattern(filename, self.search_pattern)
         if num:
+            number = extract_number(filename)
+            if number:
+                copy_to_clipboard(number)
             logger.info(f"File with pattern '{num}' found at path: {file_path}")
             if event_type != "Deleted":
                 print_file(file_path)
@@ -146,8 +174,21 @@ def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
     with open(config_file, 'w', encoding='utf-8') as file:
         config.write(file)
 
+def scan_existing_files(directory: str, search_pattern: str):
+    """
+    Scan the provided directory for files matching the search pattern and process them.
+    
+    :param directory: The directory to scan
+    :param search_pattern: The pattern to search for in filenames
+    """
+    handler = Handler(search_pattern)
+    for root, _, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            handler.process_file("Exists", file_path)
+
 def main():
-    config_file = r'src\config_noGUI.ini'
+    config_file = r'src\\config_noGUI.ini'
     config = configparser.ConfigParser()
     
     logger.info(f"Reading config file: {config_file}")
@@ -167,6 +208,9 @@ def main():
     if not os.path.isdir(watch_dir):
         logger.error(f"Directory does not exist: {watch_dir}")
         raise ValueError("Please provide a valid directory and search pattern in the config_noGUI.ini file.")
+
+    logger.info(f"Scanning existing files in directory '{watch_dir}' for pattern '{search_pattern}'")
+    scan_existing_files(watch_dir, search_pattern)
 
     logger.info(f"Starting watcher: Directory '{watch_dir}', Pattern '{search_pattern}'")
     start_watcher(watch_dir, search_pattern)
