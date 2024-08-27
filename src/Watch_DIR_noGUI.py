@@ -40,11 +40,11 @@ def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
 def extract_number(filename: str) -> Optional[str]:
     """
     Extract the specific number from the filename.
-
+    Adjust regex pattern appropriately ensuring correct escape sequences handling.
     :param filename: The filename to extract the number from
     :return: The extracted number or None
     """
-    match = re.search(r'AZ_[^_]+_.*?_(\\d+)_.*', filename)
+    match = re.search(r'AZ_[^_]+_.*?_(\d+)_.*', filename)  # Proper use of regex escaping
     if match:
         return match.group(1)
     return None
@@ -165,14 +165,24 @@ def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
     :param config: The ConfigParser object
     :param config_file: The path to the config file
     """
+    config_changed = False
+    
     if not config.has_section('settings'):
         config.add_section('settings')
+        config_changed = True  # Indicate that there was a change
+    
     if 'watch_dir' not in config['settings']:
         config.set('settings', 'watch_dir', '')
+        config_changed = True  # Indicate that there was a change
+    
     if 'search_pattern' not in config['settings']:
         config.set('settings', 'search_pattern', '')
-    with open(config_file, 'w', encoding='utf-8') as file:
-        config.write(file)
+        config_changed = True  # Indicate that there was a change
+
+    if config_changed:
+        with open(config_file, 'w', encoding='utf-8') as file:
+            config.write(file)
+        logger.info(f"Configuration defaults set in {config_file}")
 
 def scan_existing_files(directory: str, search_pattern: str):
     """
@@ -188,31 +198,41 @@ def scan_existing_files(directory: str, search_pattern: str):
             handler.process_file("Exists", file_path)
 
 def main():
-    config_file = r'src\\config_noGUI.ini'
+    config_file = r'src/config_noGUI.ini'
     config = configparser.ConfigParser()
-    
-    logger.info(f"Reading config file: {config_file}")
-    with open(config_file, 'r', encoding='utf-8') as f:
-        config.read_file(f)
-    
+
+    # Try to read existing config or ensure defaults
+    if os.path.exists(config_file):
+        logger.info(f"Attempting to read existing config file: {config_file}")
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config.read_file(f)
+    else:
+        logger.info(f"No existing config file found. Creating defaults at {config_file}")
+
+    # Ensure necessary config sections and keys
     ensure_config_exists(config, config_file)
-    
-    # Read settings from config file
+
+    # Re-read the config to make sure updates are captured
+    config.read(config_file)
+
+    # Fetch settings
     watch_dir = config.get('settings', 'watch_dir', fallback='')
     search_pattern = config.get('settings', 'search_pattern', fallback='')
 
-    logger.info(f"Configured watch directory: '{watch_dir}'")
-    logger.info(f"Configured search pattern: '{search_pattern}'")
+    logger.info(f"Using watch directory: {watch_dir}")
+    logger.info(f"Using search pattern: {search_pattern}")
 
-    # Verify the directory exists
+    # Check for directory
     if not os.path.isdir(watch_dir):
         logger.error(f"Directory does not exist: {watch_dir}")
         raise ValueError("Please provide a valid directory and search pattern in the config_noGUI.ini file.")
 
-    logger.info(f"Scanning existing files in directory '{watch_dir}' for pattern '{search_pattern}'")
+    # Scan existing files with current settings
+    logger.info(f"Scanning files in: {watch_dir} using pattern: {search_pattern}")
     scan_existing_files(watch_dir, search_pattern)
 
-    logger.info(f"Starting watcher: Directory '{watch_dir}', Pattern '{search_pattern}'")
+    # Start file watcher
+    logger.info("Starting file watcher")
     start_watcher(watch_dir, search_pattern)
 
 if __name__ == '__main__':
