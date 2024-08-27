@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import threading
 import configparser
 import tkinter as tk
 from tkinter import messagebox
@@ -10,73 +11,50 @@ from typing import Optional
 from datetime import datetime, timedelta
 import pyperclip
 
-# Setup logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        logging.FileHandler('file_watcher.log'),
-                        logging.StreamHandler()
-                    ])
-logger = logging.getLogger(__name__)
+# Configure logging
+def setup_logging(log_file: str = 'file_watcher.log'):
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s - %(levelname)s - %(message)s',
+                        handlers=[
+                            logging.FileHandler(log_file),
+                            logging.StreamHandler()
+                        ])
+    return logging.getLogger(__name__)
 
+logger = setup_logging()
+
+# Constants
 PROCESSED_FILES = {}
 IGNORE_INTERVAL = timedelta(seconds=60)  # Increase this interval as needed
 
-def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
-    """
-    Check if the filename contains the search pattern.
+# --- Utility Functions ---
 
-    :param filename: The filename to check
-    :param search_pattern: The pattern to search for
-    :return: The found pattern or None
-    """
+def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
     pattern = re.compile(search_pattern)
     match = pattern.search(filename)
     if match:
-        logger.info(f"Match found: {filename}")
+        logger.info(f"Pattern match found: {filename}")
         return match.group(0)
     return None
 
 def extract_number(filename: str) -> Optional[str]:
-    """
-    Extract the specific number from the filename.
-    Adjust regex pattern appropriately ensuring correct escape sequences handling.
-    :param filename: The filename to extract the number from
-    :return: The extracted number or None
-    """
-    match = re.search(r'AZ_[^_]+_.*?_(\d+)_.*', filename)  # Proper use of regex escaping
+    match = re.search(r'AZ_[^_]+_.*?_(\d+)_.*', filename)
     if match:
         return match.group(1)
     return None
 
 def copy_to_clipboard(text: str):
-    """
-    Copy the given text to the clipboard.
-
-    :param text: The text to copy to the clipboard
-    """
     pyperclip.copy(text)
     logger.info(f"Copied to clipboard: {text}")
 
 def confirm_print(file_path: str) -> bool:
-    """
-    Show a popup to confirm if the file should be printed.
-
-    :param file_path: The path of the file to be printed.
-    :return: True if the user confirms, False otherwise
-    """
     root = tk.Tk()
-    root.withdraw()  # Hide the main window
-    result = messagebox.askokcancel("Print Confirmation", f"Do you want to print the file:\\n\\n{file_path}?")
+    root.withdraw()
+    result = messagebox.askokcancel("Print Confirmation", f"Do you want to print the file:\n\n{file_path}?")
     root.destroy()
     return result
 
 def print_file(file_path: str):
-    """
-    Print file using the default application only if user confirms.
-
-    :param file_path: The path to the file to be printed.
-    """
     try:
         logger.info(f"Asked to print file: {file_path}")
         if confirm_print(file_path):
@@ -87,14 +65,48 @@ def print_file(file_path: str):
     except Exception as e:
         logger.error(f"Failed to print file: {e}")
 
-class Watcher:
-    def __init__(self, directory_to_watch: str, search_pattern: str):
-        self.DIRECTORY_TO_WATCH = directory_to_watch
+# --- File Handling Classes ---
+
+class FileHandler:
+    def __init__(self, search_pattern: str):
         self.search_pattern = search_pattern
+
+    def process_file(self, event_type: str, file_path: str):
+        global PROCESSED_FILES
+        now = datetime.now()
+
+        # Clean up processed files dictionary
+        PROCESSED_FILES = {path: timestamp for path, timestamp in PROCESSED_FILES.items() 
+                           if now - timestamp < IGNORE_INTERVAL}
+
+        # Check if file was processed recently
+        if file_path in PROCESSED_FILES:
+            logger.info(f"Ignoring recently processed file: {file_path}")
+            return
+
+        filename = os.path.basename(file_path)
+        logger.info(f"{event_type} file: {filename} at path: {file_path}")
+        
+        pattern_match = contains_pattern(filename, self.search_pattern)
+        if pattern_match:
+            number = extract_number(filename)
+            if number:
+                copy_to_clipboard(number)
+            logger.info(f"File with pattern '{pattern_match}' found at path: {file_path}")
+            if event_type != "Deleted":
+                print_file(file_path)
+                PROCESSED_FILES[file_path] = now
+
+# --- Watcher Setup ---
+
+class Watcher:
+    def __init__(self, directory_to_watch: str, file_handler: FileHandler):
+        self.DIRECTORY_TO_WATCH = directory_to_watch
+        self.file_handler = file_handler
         self.observer = Observer()
 
     def run(self):
-        event_handler = Handler(self.search_pattern)
+        event_handler = EventHandler(self.file_handler)
         self.observer.schedule(event_handler, self.DIRECTORY_TO_WATCH, recursive=True)
         self.observer.start()
         logger.info(f"Watching started on: {self.DIRECTORY_TO_WATCH} (including subdirectories)")
@@ -102,138 +114,92 @@ class Watcher:
             self.observer.join()
         except KeyboardInterrupt:
             self.observer.stop()
-            logger.info("Watching stopped")
+            logger.info("Watching stopped due to keyboard interrupt")
         self.observer.join()
 
-class Handler(FileSystemEventHandler):
-    def __init__(self, search_pattern: str):
+class EventHandler(FileSystemEventHandler):
+    def __init__(self, file_handler: FileHandler):
         super().__init__()
-        self.search_pattern = search_pattern
-
-    def process_file(self, event_type: str, file_path: str):
-        """
-        Process the file to check if it contains the search pattern.
-        :param event_type: Type of file event
-        :param file_path: Path of the file
-        """
-        global PROCESSED_FILES
-        now = datetime.now()
-
-        # Clean up the processed files dictionary
-        PROCESSED_FILES = {path: timestamp for path, timestamp in PROCESSED_FILES.items() if now - timestamp < IGNORE_INTERVAL}
-
-        # Check if the file was processed recently
-        if file_path in PROCESSED_FILES:
-            logger.info(f"Ignoring file as it was processed recently: {file_path}")
-            return
-
-        filename = os.path.basename(file_path)
-        logger.info(f"{event_type} file: {filename} at path: {file_path}")
-        num = contains_pattern(filename, self.search_pattern)
-        if num:
-            number = extract_number(filename)
-            if number:
-                copy_to_clipboard(number)
-            logger.info(f"File with pattern '{num}' found at path: {file_path}")
-            if event_type != "Deleted":
-                print_file(file_path)
-                PROCESSED_FILES[file_path] = now  # Update the last processed time
+        self.file_handler = file_handler
 
     def on_created(self, event):
         if not event.is_directory:
-            self.process_file("Created", event.src_path)
+            self.file_handler.process_file('Created', event.src_path)
 
     def on_moved(self, event):
         if not event.is_directory:
-            self.process_file("Moved", event.dest_path)
+            self.file_handler.process_file('Moved', event.dest_path)
 
     def on_modified(self, event):
         if not event.is_directory:
-            self.process_file("Modified", event.src_path)
+            self.file_handler.process_file('Modified', event.src_path)
 
     def on_deleted(self, event):
         if not event.is_directory:
-            self.process_file("Deleted", event.src_path)
+            self.file_handler.process_file('Deleted', event.src_path)
 
-def start_watcher(directory: str, search_pattern: str):
-    w = Watcher(directory, search_pattern)
-    w.run()
+# --- Configuration Management ---
 
 def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
-    """
-    Ensure that the config file exists and contains necessary defaults.
-    :param config: The ConfigParser object
-    :param config_file: The path to the config file
-    """
     config_changed = False
-    
     if not config.has_section('settings'):
         config.add_section('settings')
-        config_changed = True  # Indicate that there was a change
+        config_changed = True
     
     if 'watch_dir' not in config['settings']:
         config.set('settings', 'watch_dir', '')
-        config_changed = True  # Indicate that there was a change
+        config_changed = True
     
     if 'search_pattern' not in config['settings']:
         config.set('settings', 'search_pattern', '')
-        config_changed = True  # Indicate that there was a change
+        config_changed = True
 
     if config_changed:
         with open(config_file, 'w', encoding='utf-8') as file:
             config.write(file)
         logger.info(f"Configuration defaults set in {config_file}")
 
-def scan_existing_files(directory: str, search_pattern: str):
-    """
-    Scan the provided directory for files matching the search pattern and process them.
-    
-    :param directory: The directory to scan
-    :param search_pattern: The pattern to search for in filenames
-    """
-    handler = Handler(search_pattern)
-    for root, _, files in os.walk(directory):
-        for file in files:
-            file_path = os.path.join(root, file)
-            handler.process_file("Exists", file_path)
-
-def main():
-    config_file = r'src/config_noGUI.ini'
+def read_config(config_file: str) -> configparser.ConfigParser:
     config = configparser.ConfigParser()
-
-    # Try to read existing config or ensure defaults
     if os.path.exists(config_file):
-        logger.info(f"Attempting to read existing config file: {config_file}")
+        logger.info(f"Reading existing config file: {config_file}")
         with open(config_file, 'r', encoding='utf-8') as f:
             config.read_file(f)
     else:
-        logger.info(f"No existing config file found. Creating defaults at {config_file}")
+        logger.info(f"No config file found. Creating defaults at {config_file}")
+    return config
 
-    # Ensure necessary config sections and keys
+# --- Main Functionality ---
+
+def scan_existing_files(directory: str, file_handler: FileHandler):
+    for root, _, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            file_handler.process_file("Exists", file_path)
+
+def main():
+    config_file = r'src/config_noGUI.ini'
+    config = read_config(config_file)
     ensure_config_exists(config, config_file)
-
-    # Re-read the config to make sure updates are captured
     config.read(config_file)
 
-    # Fetch settings
     watch_dir = config.get('settings', 'watch_dir', fallback='')
     search_pattern = config.get('settings', 'search_pattern', fallback='')
 
     logger.info(f"Using watch directory: {watch_dir}")
     logger.info(f"Using search pattern: {search_pattern}")
 
-    # Check for directory
     if not os.path.isdir(watch_dir):
         logger.error(f"Directory does not exist: {watch_dir}")
         raise ValueError("Please provide a valid directory and search pattern in the config_noGUI.ini file.")
+    
+    logger.info(f"Scanning files in: {watch_dir}")
+    file_handler = FileHandler(search_pattern)
+    scan_existing_files(watch_dir, file_handler)
 
-    # Scan existing files with current settings
-    logger.info(f"Scanning files in: {watch_dir} using pattern: {search_pattern}")
-    scan_existing_files(watch_dir, search_pattern)
-
-    # Start file watcher
     logger.info("Starting file watcher")
-    start_watcher(watch_dir, search_pattern)
+    watcher = Watcher(watch_dir, file_handler)
+    watcher.run()
 
 if __name__ == '__main__':
     try:
