@@ -29,12 +29,12 @@ IGNORE_INTERVAL = timedelta(seconds=60)  # Increase this interval as needed
 
 # --- Utility Functions ---
 
-def contains_pattern(filename: str, search_pattern: str) -> Optional[str]:
-    pattern = re.compile(search_pattern)
-    match = pattern.search(filename)
-    if match:
-        logger.info(f"Pattern match found: {filename}")
-        return match.group(0)
+def contains_patterns(filename: str, search_patterns: list[str]) -> Optional[str]:
+    for pattern in search_patterns:
+        match = re.search(pattern, filename)
+        if match:
+            logger.info(f"Pattern match found: {filename} (pattern: {pattern})")
+            return match.group(0)
     return None
 
 def extract_number(filename: str) -> Optional[str]:
@@ -68,8 +68,8 @@ def print_file(file_path: str):
 # --- File Handling Classes ---
 
 class FileHandler:
-    def __init__(self, search_pattern: str):
-        self.search_pattern = search_pattern
+    def __init__(self, search_patterns: list[str]):
+        self.search_patterns = search_patterns
 
     def process_file(self, event_type: str, file_path: str):
         global PROCESSED_FILES
@@ -87,7 +87,7 @@ class FileHandler:
         filename = os.path.basename(file_path)
         logger.info(f"{event_type} file: {filename} at path: {file_path}")
         
-        pattern_match = contains_pattern(filename, self.search_pattern)
+        pattern_match = contains_patterns(filename, self.search_patterns)
         if pattern_match:
             number = extract_number(filename)
             if number:
@@ -150,8 +150,8 @@ def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
         config.set('settings', 'watch_dir', '')
         config_changed = True
     
-    if 'search_pattern' not in config['settings']:
-        config.set('settings', 'search_pattern', '')
+    if 'search_patterns' not in config['settings']:
+        config.set('settings', 'search_patterns', '')
         config_changed = True
 
     if config_changed:
@@ -184,17 +184,22 @@ def main():
     config.read(config_file)
 
     watch_dir = config.get('settings', 'watch_dir', fallback='')
-    search_pattern = config.get('settings', 'search_pattern', fallback='')
+    search_patterns_str = config.get('settings', 'search_patterns', fallback='')
+    search_patterns = [pattern.strip() for pattern in search_patterns_str.split(',') if pattern.strip()]
 
     logger.info(f"Using watch directory: {watch_dir}")
-    logger.info(f"Using search pattern: {search_pattern}")
+    logger.info(f"Using search patterns: {search_patterns}")
 
     if not os.path.isdir(watch_dir):
         logger.error(f"Directory does not exist: {watch_dir}")
-        raise ValueError("Please provide a valid directory and search pattern in the config_noGUI.ini file.")
+        raise ValueError("Please provide a valid directory in the config_noGUI.ini file.")
     
+    if not search_patterns:
+        logger.error("No search patterns provided")
+        raise ValueError("Please provide at least one search pattern in the config_noGUI.ini file.")
+
     logger.info(f"Scanning files in: {watch_dir}")
-    file_handler = FileHandler(search_pattern)
+    file_handler = FileHandler(search_patterns)
     scan_existing_files(watch_dir, file_handler)
 
     logger.info("Starting file watcher")
