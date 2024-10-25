@@ -16,6 +16,39 @@ def validate_file_path(path):
     else:
         logging.info(f"File validated and exists: {path}")
 
+logger = logging.getLogger(__name__)
+
+def read_config(config_file: str) -> configparser.ConfigParser:
+    """ Reads the configuration from the provided config file. """
+    config = configparser.ConfigParser()
+    if os.path.exists(config_file):
+        logger.info(f"Reading existing config file: {config_file}")
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config.read_file(f)
+    else:
+        logger.info(f"No config file found. Creating defaults at {config_file}")
+    return config
+
+def ensure_config_exists(config: configparser.ConfigParser, config_file: str):
+    """ Ensure the configuration file is set with the necessary default values. """
+    config_changed = False
+    if not config.has_section('settings'):
+        config.add_section('settings')
+        config_changed = True
+
+    if 'watch_dir' not in config['settings']:
+        config.set('settings', 'watch_dir', '')
+        config_changed = True
+
+    if 'search_patterns' not in config['settings']:
+        config.set('settings', 'search_patterns', '')
+        config_changed = True
+
+    if config_changed:
+        with open(config_file, 'w', encoding='utf-8') as file:
+            config.write(file)
+        logger.info(f"Configuration defaults set in {config_file}")
+
 if __name__ == "__main__":
     # Read and process the configuration
     try:
