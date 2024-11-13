@@ -3,14 +3,18 @@ import re
 import logging
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from datetime import datetime, timedelta
 import pyperclip
 import configparser
 from typing import Optional
+import queue
 import modules as m
+
+# --- Message Queue for Thread Communication ---
+message_queue = queue.Queue()
 
 # --- Configure Logging ---
 def setup_logging(log_file: str = 'file_watcher.log'):
@@ -85,11 +89,105 @@ def print_file(file_path: str):
         logger.error(f"Failed to print file: {general_error}")
 
 
+# --- Status Window Class ---
+
+class StatusWindow:
+    """Provides a GUI window to display the program's status."""
+    
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("File Watcher Status")
+        self.root.geometry("800x300")
+        
+        # Configure grid weights
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
+        # Status label
+        self.status_label = tk.Label(self.root, text="Status: Initializing...",
+                                   font=("Arial", 10, "bold"))
+        self.status_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        
+        # Activity log text widget
+        self.log_frame = ttk.Frame(self.root)
+        self.log_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+        
+        self.log_text = tk.Text(self.log_frame, height=10, width=45)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Scrollbar for log text
+        scrollbar = ttk.Scrollbar(self.log_frame, orient="vertical", 
+                                command=self.log_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        
+        # Statistics frame
+        self.stats_frame = ttk.LabelFrame(self.root, text="Statistics")
+        self.stats_frame.grid(row=2, column=0, padx=5, pady=5, sticky="ew")
+        
+        self.files_processed_label = tk.Label(self.stats_frame, 
+                                            text="Files Processed: 0")
+        self.files_processed_label.pack(pady=5)
+        
+        self.files_printed_label = tk.Label(self.stats_frame, 
+                                          text="Files Printed: 0")
+        self.files_printed_label.pack(pady=5)
+        
+        # Initialize counters
+        self.files_processed = 0
+        self.files_printed = 0
+
+        # Setup periodic check for messages
+        self.check_messages()
+
+    def check_messages(self):
+        """Check for messages in the queue and process them."""
+        try:
+            while True:  # Process all available messages
+                message = message_queue.get_nowait()
+                message_type = message.get('type')
+                content = message.get('content')
+
+                if message_type == 'status':
+                    self.update_status(content)
+                elif message_type == 'log':
+                    self.add_log_entry(content)
+                elif message_type == 'increment_processed':
+                    self.increment_processed()
+                elif message_type == 'increment_printed':
+                    self.increment_printed()
+        except queue.Empty:
+            pass
+        finally:
+            # Schedule next check
+            self.root.after(100, self.check_messages)
+        
+    def update_status(self, status: str):
+        """Update the status label."""
+        self.status_label.config(text=f"Status: {status}")
+        
+    def add_log_entry(self, message: str):
+        """Add a new entry to the log text widget."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.log_text.see(tk.END)
+        
+    def increment_processed(self):
+        """Increment the processed files counter."""
+        self.files_processed += 1
+        self.files_processed_label.config(
+            text=f"Files Processed: {self.files_processed}")
+        
+    def increment_printed(self):
+        """Increment the printed files counter."""
+        self.files_printed += 1
+        self.files_printed_label.config(
+            text=f"Files Printed: {self.files_printed}")
+
+
 # --- File Handling Classes ---
 
 class FileHandler:
-    """Processes the files based on the given search patterns."""
-
     def __init__(self, search_patterns: list[str]):
         self.search_patterns = search_patterns
 
@@ -97,26 +195,37 @@ class FileHandler:
         global PROCESSED_FILES
         now = datetime.now()
         
-        # Clean up processed files dictionary by removing old entries
-        PROCESSED_FILES = {path: timestamp for path, timestamp in PROCESSED_FILES.items()
-                           if now - timestamp < IGNORE_INTERVAL}
+        # Update status through queue
+        message_queue.put({'type': 'status', 
+                          'content': f"Processing {event_type} file..."})
+        
+        # Clean up processed files dictionary
+        PROCESSED_FILES = {path: timestamp 
+                         for path, timestamp in PROCESSED_FILES.items()
+                         if now - timestamp < IGNORE_INTERVAL}
 
         if file_path in PROCESSED_FILES:
-            logger.info(f"Ignoring recently processed file: {file_path}")
+            message_queue.put({'type': 'log', 
+                             'content': f"Ignoring recently processed file: {os.path.basename(file_path)}"})
             return
 
         filename = os.path.basename(file_path)
-        logger.info(f"{event_type} file: {filename} at path: {file_path}")
+        message_queue.put({'type': 'log', 
+                          'content': f"{event_type} file: {filename}"})
 
-        # Search for patterns in the filename
+        # Process file
         pattern_match = contains_patterns(filename, self.search_patterns)
         if pattern_match:
             number = extract_number(filename)
             if number:
                 copy_to_clipboard(number)
+                message_queue.put({'type': 'log', 
+                                 'content': f"Copied number: {number}"})
             if event_type != "Deleted":
-                print_file(file_path)
+                if print_file(file_path):
+                    message_queue.put({'type': 'increment_printed'})
                 PROCESSED_FILES[file_path] = now
+                message_queue.put({'type': 'increment_processed'})
 
 
 # --- Watcher Classes ---
@@ -188,7 +297,6 @@ def validate_inputs(watch_dir: str, search_patterns: list[str]):
         except re.error as e:
             raise ValueError(f"Invalid regex pattern provided: {pattern}. Error: {e}")
 
-
 def scan_existing_files(directory: str, file_handler: FileHandler):
     """Scan existing files in the watched directory at startup."""
     for root, _, files in os.walk(directory):
@@ -196,44 +304,55 @@ def scan_existing_files(directory: str, file_handler: FileHandler):
             file_path = os.path.join(root, file)
             file_handler.process_file("Exists", file_path)
 
-
-# --- Main Execution ---
-
-def main():
+def run_watcher():
+    """Run the file watcher in a separate thread."""
     config_file = r'src/config_noGUI.ini'
-    
-    # Read and ensure the config exists
     config = m.read_config(config_file)
     m.ensure_config_exists(config, config_file)
     config.read(config_file)
 
-    # Read the directory and search patterns from the config
     watch_dir = config.get('settings', 'watch_dir', fallback='')
     search_patterns_str = config.get('settings', 'search_patterns', fallback='')
-    search_patterns = [pattern.strip() for pattern in search_patterns_str.split(',') if pattern.strip()]
+    search_patterns = [pattern.strip() 
+                      for pattern in search_patterns_str.split(',') 
+                      if pattern.strip()]
 
-    logger.info(f"Configured watch directory: {watch_dir}")
-    logger.info(f"Configured search patterns: {search_patterns}")
-
-    # Validate inputs
+    message_queue.put({'type': 'status', 'content': "Initializing..."})
+    message_queue.put({'type': 'log', 
+                      'content': f"Watching directory: {watch_dir}"})
+    
     try:
         validate_inputs(watch_dir, search_patterns)
-    except ValueError as e:
-        logger.error(f"Input validation error: {e}")
-        raise
+        file_handler = FileHandler(search_patterns)
+        
+        message_queue.put({'type': 'status', 
+                          'content': "Scanning existing files..."})
+        scan_existing_files(watch_dir, file_handler)
+        
+        message_queue.put({'type': 'status', 
+                          'content': "Watching for changes..."})
+        watcher = Watcher(watch_dir, file_handler)
+        watcher.run()
+        
+    except Exception as e:
+        message_queue.put({'type': 'status', 'content': "Error occurred!"})
+        message_queue.put({'type': 'log', 'content': f"Error: {str(e)}"})
+        logger.error(f"An unexpected error occurred: {e}")
 
-    # Create a FileHandler instance
-    file_handler = FileHandler(search_patterns)
+
+# --- Main Execution ---
+
+def main():
+    # Create and start GUI in the main thread
+    status_window = StatusWindow()
     
-    # Scan existing files on startup
-    logger.info(f"Scanning for existing files in the directory: {watch_dir}")
-    scan_existing_files(watch_dir, file_handler)
-
-    # Start the watcher
-    logger.info("Starting file monitoring...")
-    watcher = Watcher(watch_dir, file_handler)
-    watcher.run()
-
+    # Start the file watcher in a separate thread
+    watcher_thread = threading.Thread(target=run_watcher)
+    watcher_thread.daemon = True
+    watcher_thread.start()
+    
+    # Run the main GUI loop
+    status_window.root.mainloop()
 
 if __name__ == '__main__':
     try:
